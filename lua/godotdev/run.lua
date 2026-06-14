@@ -147,17 +147,10 @@ local function pick_scene_list(scenes, title)
   return true
 end
 
+local cache_path = vim.fn.stdpath("cache") .. "/godotdev_exe_cache.txt"
+
 local function get_godot_executable(callback)
   -- 1. Check permanent cache
-  local file = io.open(cache_path, "r")
-  if file then
-    local cached_exe = file:read("*l")
-    file:close()
-    if cached_exe and cached_exe ~= "" and vim.fn.executable(cached_exe) == 1 then
-      callback(cached_exe)
-      return
-    end
-  end
 
   vim.notify("Godot executable not cached.", vim.log.levels.WARN)
 
@@ -207,29 +200,40 @@ local function run_godot(args)
     return false
   end
 
-  get_godot_executable(function(godot_exe)
-    if not godot_exe then
-      return false
-    end
+  local file = io.open(cache_path, "r")
+  if file then
+    local cached_exe = file:read("*l")
+    file:close()
+    if cached_exe and cached_exe ~= "" and vim.fn.executable(cached_exe) == 1 then
+      local cmd = { cached_exe, "--path", root }
+      vim.list_extend(cmd, args or {})
 
-    local cmd = { godot_exe, "--path", root }
-    vim.list_extend(cmd, args or {})
-
-    local run_console = require("godotdev.run_console")
-    if run_console.is_enabled() then
-      return run_console.start(cmd, root)
-    end
-
-    vim.system(cmd, { detach = true, text = true }, function(result)
-      if result.code == 0 then
-        return
+      local run_console = require("godotdev.run_console")
+      if run_console.is_enabled() then
+        return run_console.start(cmd, root)
       end
 
-      vim.schedule(function()
-        local stderr = vim.trim(result.stderr or "")
-        vim.notify(stderr ~= "" and stderr or "Failed to start Godot", vim.log.levels.ERROR)
+      vim.system(cmd, { detach = true, text = true }, function(result)
+        if result.code == 0 then
+          return
+        end
+
+        vim.schedule(function()
+          local stderr = vim.trim(result.stderr or "")
+          vim.notify(stderr ~= "" and stderr or "Failed to start Godot", vim.log.levels.ERROR)
+        end)
       end)
-    end)
+    end
+  end
+end
+
+function M.get_exe()
+  get_godot_executable(function(path)
+    if path then
+      vim.notify("Godot executable path is set to: " .. path, vim.log.levels.INFO)
+    else
+      vim.notify("No valid Godot executable is selected.", vim.log.levels.WARN)
+    end
   end)
 end
 
@@ -314,6 +318,12 @@ function M.setup()
     end, {
       desc = "Pick and run a Godot scene using Telescope",
     })
+  end
+
+  if vim.fn.exists(":GodotGetExe") ~= 2 then
+    vim.api.nvim_create_user_command("GodotGetExe", function()
+      M.get_exe()
+    end, { desc = "Get path to Godot executable" })
   end
 end
 
