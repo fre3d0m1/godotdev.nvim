@@ -147,9 +147,8 @@ local function pick_scene_list(scenes, title)
   return true
 end
 
-local cache_path = vim.fn.stdpath("data") .. "godotdev_exe_cache.txt"
-
 local function get_godot_executable(callback)
+  -- 1. Check permanent cache
   local file = io.open(cache_path, "r")
   if file then
     local cached_exe = file:read("*l")
@@ -160,24 +159,44 @@ local function get_godot_executable(callback)
     end
   end
 
-  vim.notify("Godot executable not cached. Please select your Godot binary...", vim.log.levels.WARN)
+  vim.notify("Godot executable not cached.", vim.log.levels.WARN)
 
-  vim.ui.select(vim.fn.glob(vim.fn.expand("$HOME") .. "/**/*", false, true), {
-    prompt = "Select Godot Executable: ",
-  }, function(choice)
-    if choice and choice ~= "" and vim.fn.executable(choice) == 1 then
-      -- Save it to the cache file so we remember it forever
-      local write_file = io.open(cache_path, "w")
-      if write_file then
-        write_file:write(choice)
-        write_file:close()
+  -- 2. Use Neovim's built-in file completion to safely select the executable
+  vim.schedule(function()
+    vim.ui.input({
+      prompt = "Path to Godot executable: ",
+      default = vim.fn.expand("$HOME/"),
+      completion = "file", -- Enforces safe file auto-completion instead of raw text
+    }, function(choice)
+      if not choice or choice == "" then
+        vim.notify("No path provided.", vim.log.levels.ERROR)
+        callback(nil)
+        return
       end
-      vim.notify("Godot path saved permanently!", vim.log.levels.INFO)
-      callback(choice)
-    else
-      vim.notify("Invalid or no executable selected.", vim.log.levels.ERROR)
-      callback(nil)
-    end
+
+      -- Clean up any trailing spaces or tildes
+      choice = vim.fs.normalize(vim.trim(choice))
+
+      -- Ensure it's a file, NOT a directory, before calling executable()
+      if vim.fn.isdirectory(choice) == 1 then
+        vim.notify("Path is a directory, not an executable file.", vim.log.levels.ERROR)
+        callback(nil)
+        return
+      end
+
+      if vim.fn.executable(choice) == 1 then
+        local write_file = io.open(cache_path, "w")
+        if write_file then
+          write_file:write(choice)
+          write_file:close()
+        end
+        vim.notify("Godot path saved permanently!", vim.log.levels.INFO)
+        callback(choice)
+      else
+        vim.notify("File is not executable. Check your permissions.", vim.log.levels.ERROR)
+        callback(nil)
+      end
+    end)
   end)
 end
 
@@ -193,7 +212,6 @@ local function run_godot(args)
       return false
     end
 
-    -- Use the specific cached binary path instead of the generic string "godot"
     local cmd = { godot_exe, "--path", root }
     vim.list_extend(cmd, args or {})
 
