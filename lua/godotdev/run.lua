@@ -124,25 +124,61 @@ local function pick_scene_list(scenes, title)
     return false
   end
 
-  telescope.pickers.new({}, {
-    prompt_title = title,
-    finder = telescope.finders.new_table({
-      results = scenes,
-    }),
-    sorter = telescope.config.values.generic_sorter({}),
-    attach_mappings = function(prompt_bufnr)
-      telescope.actions.select_default:replace(function()
-        local selection = telescope.action_state.get_selected_entry()
-        telescope.actions.close(prompt_bufnr)
-        if selection and selection[1] then
-          M.run_scene(selection[1])
-        end
-      end)
-      return true
-    end,
-  }):find()
+  telescope.pickers
+    .new({}, {
+      prompt_title = title,
+      finder = telescope.finders.new_table({
+        results = scenes,
+      }),
+      sorter = telescope.config.values.generic_sorter({}),
+      attach_mappings = function(prompt_bufnr)
+        telescope.actions.select_default:replace(function()
+          local selection = telescope.action_state.get_selected_entry()
+          telescope.actions.close(prompt_bufnr)
+          if selection and selection[1] then
+            M.run_scene(selection[1])
+          end
+        end)
+        return true
+      end,
+    })
+    :find()
 
   return true
+end
+
+local cache_path = vim.fn.stdpath("data") .. "godotdev_exe_cache.txt"
+
+local function get_godot_executable(callback)
+  local file = io.open(cache_path, "r")
+  if file then
+    local cached_exe = file:read("*l")
+    file:close()
+    if cached_exe and cached_exe ~= "" and vim.fn.executable(cached_exe) == 1 then
+      callback(cached_exe)
+      return
+    end
+  end
+
+  vim.notify("Godot executable not cached. Please select your Godot binary...", vim.log.levels.WARN)
+
+  vim.ui.select(vim.fn.glob(vim.fn.expand("$HOME") .. "/**/*", false, true), {
+    prompt = "Select Godot Executable: ",
+  }, function(choice)
+    if choice and choice ~= "" and vim.fn.executable(choice) == 1 then
+      -- Save it to the cache file so we remember it forever
+      local write_file = io.open(cache_path, "w")
+      if write_file then
+        write_file:write(choice)
+        write_file:close()
+      end
+      vim.notify("Godot path saved permanently!", vim.log.levels.INFO)
+      callback(choice)
+    else
+      vim.notify("Invalid or no executable selected.", vim.log.levels.ERROR)
+      callback(nil)
+    end
+  end)
 end
 
 local function run_godot(args)
@@ -152,31 +188,31 @@ local function run_godot(args)
     return false
   end
 
-  if vim.fn.executable("godot") ~= 1 then
-    vim.notify("'godot' not found in PATH", vim.log.levels.ERROR)
-    return false
-  end
-
-  local cmd = { "godot", "--path", root }
-  vim.list_extend(cmd, args or {})
-
-  local run_console = require("godotdev.run_console")
-  if run_console.is_enabled() then
-    return run_console.start(cmd, root)
-  end
-
-  vim.system(cmd, { detach = true, text = true }, function(result)
-    if result.code == 0 then
-      return
+  get_godot_executable(function(godot_exe)
+    if not godot_exe then
+      return false
     end
 
-    vim.schedule(function()
-      local stderr = vim.trim(result.stderr or "")
-      vim.notify(stderr ~= "" and stderr or "Failed to start Godot", vim.log.levels.ERROR)
+    -- Use the specific cached binary path instead of the generic string "godot"
+    local cmd = { godot_exe, "--path", root }
+    vim.list_extend(cmd, args or {})
+
+    local run_console = require("godotdev.run_console")
+    if run_console.is_enabled() then
+      return run_console.start(cmd, root)
+    end
+
+    vim.system(cmd, { detach = true, text = true }, function(result)
+      if result.code == 0 then
+        return
+      end
+
+      vim.schedule(function()
+        local stderr = vim.trim(result.stderr or "")
+        vim.notify(stderr ~= "" and stderr or "Failed to start Godot", vim.log.levels.ERROR)
+      end)
     end)
   end)
-
-  return true
 end
 
 function M.run_project()
